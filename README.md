@@ -1,0 +1,86 @@
+# Chat Roulette
+
+Телеграм-бот «чат-рулетка»: анонимный диалог двух случайных собеседников.
+Стек: Python 3.14, aiogram 3 (webhook), PostgreSQL 18, Redis 7, SQLAlchemy 2 (async), Alembic.
+
+## Запуск
+
+1. Создайте `.env` из примера и заполните `BOT_TOKEN`, `WEBHOOK_BASE_URL`, `WEBHOOK_SECRET`, `POSTGRES_PASSWORD`:
+
+   ```sh
+   cp .env.example .env
+   ```
+
+2. Запустите сервисы:
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+   Контейнер бота при старте применяет миграции (`alembic upgrade head`) и регистрирует webhook
+   `WEBHOOK_BASE_URL + WEBHOOK_PATH`.
+
+3. Направьте Nginx на бота: готовый конфиг лежит в [deploy/nginx.conf](deploy/nginx.conf).
+   Замените в нём `bot.example.com` на свой домен и подключите:
+
+   ```sh
+   sudo cp deploy/nginx.conf /etc/nginx/conf.d/chatroullete.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+Все порты привязаны к `127.0.0.1`. Порты на хосте задаются переменными `BOT_PORT` (8085),
+`POSTGRES_PORT` (5432) и `REDIS_PORT` (6379); в скобках значения по умолчанию.
+
+## Настройки
+
+Все переменные с пояснениями — в [.env.example](.env.example). Основные:
+
+| Переменная | По умолчанию | Назначение |
+| --- | --- | --- |
+| `ROOM_IDLE_TIMEOUT_SECONDS` | `600` | Через сколько секунд без сообщений комната закрывается |
+| `ROOM_IDLE_CHECK_INTERVAL_SECONDS` | `30` | Как часто ищутся простаивающие комнаты |
+| `DEFAULT_LANGUAGE` | `ru` | Язык интерфейса, если язык Telegram пользователя не поддерживается |
+| `MIN_AGE`, `MAX_AGE` | `18`, `99` | Допустимый возраст в настройках |
+
+## Структура
+
+```
+src/chatroullete/
+  app.py          сборка зависимостей, webhook-приложение aiohttp
+  config.py       настройки из окружения
+  routers/        обработчики Telegram: меню, поиск, чат, настройки, отзывы
+  services/       бизнес-логика: подбор пары, комнаты, пересылка, отзывы, блокировки, уведомления
+  repository/     запросы к PostgreSQL
+  cache/          Redis: настройки пользователя, статус комнаты, последнее сообщение
+  models/         таблицы SQLAlchemy
+  middlewares/    регистрация пользователя, язык, очередь обновлений одного пользователя
+  keyboards/      клавиатуры
+  i18n/           тексты: ru, en, uz, uz_cyrl
+migrations/       миграции Alembic
+```
+
+## Как это работает
+
+- **Подбор пары.** Ищущие лежат в таблице `search_queue`. Пара создаётся в одной транзакции под
+  блокировкой строк обоих пользователей (`SELECT … FOR UPDATE`, всегда в порядке возрастания id),
+  поэтому одного пользователя нельзя забрать в две комнаты.
+- **Сообщения.** На время доставки комната блокируется `FOR SHARE`: сообщения участников друг
+  другу не мешают, а закрытие комнаты (`FOR UPDATE`) ждёт их завершения. Собеседник получает копию
+  с `protect_content`, которую нельзя переслать или сохранить. Каждое сообщение пишется в `messages`.
+- **Redis.** Настройки пользователя, статус комнаты и последнее сообщение читаются из Redis; при
+  промахе или недоступности Redis — из PostgreSQL. Источник истины — база: любое изменение комнаты
+  перепроверяет её статус под блокировкой.
+- **Простой.** Фоновая задача закрывает комнаты, в которых время последнего сообщения (из Redis)
+  старше `ROOM_IDLE_TIMEOUT_SECONDS`, и уведомляет обоих участников.
+
+## Разработка
+
+```sh
+uv sync
+docker compose up -d postgres redis
+uv run alembic upgrade head
+uv run chatroullete
+
+# новая миграция после изменения моделей
+uv run alembic revision --autogenerate -m "описание"
+```
