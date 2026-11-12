@@ -20,13 +20,9 @@
    Контейнер бота при старте применяет миграции (`alembic upgrade head`) и регистрирует webhook
    `WEBHOOK_BASE_URL + WEBHOOK_PATH`.
 
-3. Направьте Nginx на бота: готовый конфиг лежит в [deploy/nginx.conf](deploy/nginx.conf).
-   Замените в нём `bot.example.com` на свой домен и подключите:
-
-   ```sh
-   sudo cp deploy/nginx.conf /etc/nginx/conf.d/chatroullete.conf
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
+3. Направьте Nginx на бота: готовый конфиг лежит в [deploy/nginx.conf](deploy/nginx.conf),
+   пошаговая настройка на сервере (сертификат, подключение, проверка) — в
+   [deploy/nginx.md](deploy/nginx.md).
 
 Все порты привязаны к `127.0.0.1`. Порты на хосте задаются переменными `BOT_PORT` (8085),
 `POSTGRES_PORT` (5432) и `REDIS_PORT` (6379); в скобках значения по умолчанию.
